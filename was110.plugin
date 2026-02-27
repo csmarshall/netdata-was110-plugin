@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""
+Netdata external plugin for WAS-110 XGS-PON monitoring.
+
+This plugin monitors a BFW Solutions WAS-110 XGS-PON SFP+ module running
+the 8311 community firmware. It collects optical power, temperature, PLOAM
+state, and electrical metrics via the device's JSON API.
+
+License: MIT
+"""
+
+import json
+import logging
+import signal
+import sys
+import time
+import urllib3
+from configparser import ConfigParser
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+from urllib.parse import urljoin
+import requests
+
+
+# Disable SSL warnings for self-signed certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class WAS110Monitor:
+    """Monitor class for WAS-110 XGS-PON device."""
+
+    def __init__(self, config_path: str = '/etc/netdata/was110.conf'):
+        """Initialize the monitor with configuration."""
+        self.config_path = config_path
+        self.config = self._load_config()
+        self.last_ploam_state = None
+        self.state_transitions = 0
+        self.to_operational_count = 0
+        self.to_down_count = 0
+        self.uptime_start = None
+        self.last_update_time = time.time()
+        self.update_every = self.config.getint('global', 'update_every', fallback=2)
+
+        # Setup logging
+        self._setup_logging()
+
+        # Signal handlers for clean shutdown
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+        self.running = True
+
+    def _setup_logging(self) -> None:
+        """Setup logging to stderr for Netdata."""
+        log_level = self.config.get('global', 'log_level', fallback='INFO')
+        logging.basicConfig(
+            level=getattr(logging, log_level.upper()),
+            format='%(asctime)s [%(levelname)s] was110.plugin: %(message)s',
+            stream=sys.stderr
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def _load_config(self) -> ConfigParser:
+        """Load configuration from file with defaults."""
+        config = ConfigParser()
+
+        # Set defaults
+        config.add_section('global')
+        config.set('global', 'url', 'https://192.168.11.1/cgi-bin/luci/8311/metrics')
+        config.set('global', 'username', 'root')
+        config.set('global', 'password', '8311')
+        config.set('global', 'update_every', '2')
+        config.set('global', 'timeout', '5')
+        config.set('global', 'log_level', 'INFO')
+
+        config.add_section('thresholds')
+        config.set('thresholds', 'rx_power_excellent', '-21')
+        config.set('thresholds', 'rx_power_good', '-25')
+        config.set('thresholds', 'rx_power_acceptable', '-27')
+        config.set('thresholds', 'rx_power_poor', '-30')
+
+        # Load from file if it exists
+        if Path(self.config_path).exists():
+            try:
+                config.read(self.config_path)
+            except Exception as e:
+                logging.error(f"Failed to read config file {self.config_path}: {e}")
+
+        return config
+
+    def _signal_handler(self, signum: int, frame) -> None:
+        """Handle shutdown signals."""
+        self.logger.info(f"Received signal {signum}, shutting down...")
+        self.running = False
+
+    def _fetch_metrics(self) -> Optional[Dict]:
+        """Fetch metrics from WAS-110 API."""
+        try:
+            url = self.config.get('global', 'url')
+            username = self.config.get('global', 'username')
+            password = self.config.get('global', 'password')
+            timeout = self.config.getint('global', 'timeout', fallback=5)
+
+            response = requests.get(
+                url,
+                auth=(username, password),
+                verify=False,
+                timeout=timeout
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            self.logger.debug(f"Fetched metrics: {data}")
+            return data
+
+        except requests.exceptions.Timeout:
+            self.logger.error("Timeout connecting to WAS-110")
+        except requests.exceptions.ConnectionError:
+            self.logger.error("Connection error to WAS-110")
+        except requests.exceptions.HTTPError as e:
+            self.logger.error(f"HTTP error from WAS-110: {e}")
+        except json.JSONDecodeError:
+            self.logger.error("Invalid JSON response from WAS-110")
+        except Exception as e:
+            self.logger.error(f"Unexpected error fetching metrics: {e}")
+
+        return None
+
+    def _calculate_signal_quality(self, rx_power: float) -> int:
+        """Calculate signal quality percentage based on RX power."""
+        excellent = self.config.getfloat('thresholds', 'rx_power_excellent', fallback=-21)
+        good = self.config.getfloat('thresholds', 'rx_power_good', fallback=-25)
+        acceptable = self.config.getfloat('thresholds', 'rx_power_acceptable', fallback=-27)
+        poor = self.config.getfloat('thresholds', 'rx_power_poor', fallback=-30)
+
+        if rx_power >= excellent:
+            return 100
+        elif rx_power >= good:
+            return 80
+        elif rx_power >= acceptable:
+            return 60
+        elif rx_power >= poor:
+            return 40
+        else:
+            return 20
+
+    def _update_state_tracking(self, ploam_state: int) -> None:
+        """Update PLOAM state tracking and counters."""
+        current_time = time.time()
+
+        if self.last_ploam_state is not None and self.last_ploam_state != ploam_state:
+            self.state_transitions += 1
+            self.logger.info(f"PLOAM state transition: {self.last_ploam_state} -> {ploam_state}")
+
+            # Track transitions to operational states
+            if ploam_state in [51, 52]:
+                self.to_operational_count += 1
+                self.uptime_start = current_time
+                self.logger.info("Connection established (O5 state)")
+            elif self.last_ploam_state in [51, 52]:
+                self.to_down_count += 1
+                self.uptime_start = None
+                self.logger.warning("Connection lost (left O5 state)")
+
+        elif self.last_ploam_state is None and ploam_state in [51, 52]:
+            # Initial state in operational mode
+            self.uptime_start = current_time
+
+        self.last_ploam_state = ploam_state
+
+    def _get_connection_uptime(self) -> int:
+        """Get connection uptime in seconds."""
+        if self.uptime_start is None:
+            return 0
+        return int(time.time() - self.uptime_start)
+
+    def _output_chart_definitions(self) -> None:
+        """Output Netdata chart definitions."""
+        charts = [
+            ("was110.ploam_state", "PLOAM State", "state", "pon", "line", 1000, [
+                ("state", "state", "absolute")
+            ]),
+            ("was110.optical_power", "Optical Power", "dBm", "optical", "line", 1001, [
+                ("rx_power", "RX Power", "absolute"),
+                ("tx_power", "TX Power", "absolute")
+            ]),
+            ("was110.signal_quality", "Signal Quality", "percent", "optical", "area", 1002, [
+                ("quality_percent", "Quality", "absolute")
+            ]),
+            ("was110.temperature", "Temperature", "celsius", "temperature", "line", 1003, [
+                ("optic", "Optic", "absolute"),
+                ("cpu1", "CPU1", "absolute"),
+                ("cpu2", "CPU2", "absolute")
+            ]),
+            ("was110.electrical", "Electrical", "mixed", "electrical", "line", 1004, [
+                ("voltage", "Voltage (V)", "absolute"),
+                ("tx_bias", "TX Bias (mA)", "absolute")
+            ]),
+            ("was110.connection_uptime", "Connection Uptime", "seconds", "pon", "area", 1005, [
+                ("uptime_seconds", "Uptime", "absolute")
+            ]),
+            ("was110.state_transitions", "State Transitions", "events", "pon", "stacked", 1006, [
+                ("total_transitions", "Total", "absolute"),
+                ("to_operational", "To O5", "absolute"),
+                ("to_down", "To Down", "absolute")
+            ])
+        ]
+
+        for chart_id, title, units, family, chart_type, priority, dimensions in charts:
+            print(f"CHART {chart_id} '' '{title}' '{units}' '{family}' '{chart_id}' {chart_type} {priority} {self.update_every}")
+            for dim_id, dim_name, algorithm in dimensions:
+                print(f"DIMENSION {dim_id} '{dim_name}' {algorithm} 1 1")
+            print()
+
+    def _output_metrics(self, metrics: Dict) -> None:
+        """Output current metrics in Netdata format."""
+        # Calculate derived metrics
+        signal_quality = self._calculate_signal_quality(metrics.get('rx_power_dBm', -999))
+        self._update_state_tracking(metrics.get('ploam_state', 0))
+        uptime = self._get_connection_uptime()
+
+        # Output all metrics
+        metric_outputs = [
+            ("was110.ploam_state", [("state", metrics.get('ploam_state', 0))]),
+            ("was110.optical_power", [
+                ("rx_power", int(metrics.get('rx_power_dBm', -999) * 100)),  # Store as hundredths
+                ("tx_power", int(metrics.get('tx_power_dBm', 0) * 100))
+            ]),
+            ("was110.signal_quality", [("quality_percent", signal_quality)]),
+            ("was110.temperature", [
+                ("optic", int(metrics.get('optic_tempC', 0) * 100)),  # Store as hundredths
+                ("cpu1", int(metrics.get('cpu1_tempC', 0) * 100)),
+                ("cpu2", int(metrics.get('cpu2_tempC', 0) * 100))
+            ]),
+            ("was110.electrical", [
+                ("voltage", int(metrics.get('module_voltage', 0) * 100)),  # Store as hundredths
+                ("tx_bias", int(metrics.get('tx_bias_mA', 0) * 100))
+            ]),
+            ("was110.connection_uptime", [("uptime_seconds", uptime)]),
+            ("was110.state_transitions", [
+                ("total_transitions", self.state_transitions),
+                ("to_operational", self.to_operational_count),
+                ("to_down", self.to_down_count)
+            ])
+        ]
+
+        for chart_id, values in metric_outputs:
+            print(f"BEGIN {chart_id}")
+            for dim_id, value in values:
+                print(f"SET {dim_id} = {value}")
+            print("END")
+
+    def run(self) -> None:
+        """Main monitoring loop."""
+        self.logger.info("Starting WAS-110 monitoring plugin")
+
+        # Output chart definitions once
+        self._output_chart_definitions()
+        sys.stdout.flush()
+
+        while self.running:
+            loop_start = time.time()
+
+            # Fetch and output metrics
+            metrics = self._fetch_metrics()
+            if metrics:
+                self._output_metrics(metrics)
+            else:
+                self.logger.warning("Failed to fetch metrics, outputting zeros")
+                # Output zeros to maintain chart continuity
+                empty_metrics = {
+                    'ploam_state': 0,
+                    'rx_power_dBm': -999,
+                    'tx_power_dBm': 0,
+                    'optic_tempC': 0,
+                    'cpu1_tempC': 0,
+                    'cpu2_tempC': 0,
+                    'module_voltage': 0,
+                    'tx_bias_mA': 0
+                }
+                self._output_metrics(empty_metrics)
+
+            sys.stdout.flush()
+
+            # Sleep until next update
+            elapsed = time.time() - loop_start
+            sleep_time = max(0, self.update_every - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        self.logger.info("WAS-110 monitoring plugin stopped")
+
+
+def main():
+    """Main entry point."""
+    # Handle command line argument for update interval
+    update_every = 2
+    if len(sys.argv) > 1:
+        try:
+            update_every = int(sys.argv[1])
+            if update_every < 1:
+                update_every = 1
+        except ValueError:
+            print("Usage: was110.plugin [update_every_seconds]", file=sys.stderr)
+            sys.exit(1)
+
+    # Override config if specified via command line
+    config_path = '/etc/netdata/was110.conf'
+    monitor = WAS110Monitor(config_path)
+    if len(sys.argv) > 1:
+        monitor.update_every = update_every
+
+    try:
+        monitor.run()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logging.error(f"Fatal error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
