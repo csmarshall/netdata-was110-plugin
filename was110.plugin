@@ -9,18 +9,19 @@ state, and electrical metrics via the device's JSON API.
 License: MIT
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import signal
 import sys
 import time
-import urllib3
 from configparser import ConfigParser
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
-from urllib.parse import urljoin
+from types import FrameType
+
 import requests
+import urllib3
 
 
 # Disable SSL warnings for self-signed certificates
@@ -34,12 +35,11 @@ class WAS110Monitor:
         """Initialize the monitor with configuration."""
         self.config_path = config_path
         self.config = self._load_config()
-        self.last_ploam_state = None
+        self.last_ploam_state: int | None = None
         self.state_transitions = 0
         self.to_operational_count = 0
         self.to_down_count = 0
-        self.uptime_start = None
-        self.last_update_time = time.time()
+        self.uptime_start: float | None = None
         self.update_every = self.config.getint('global', 'update_every', fallback=2)
 
         # Setup logging
@@ -89,12 +89,12 @@ class WAS110Monitor:
 
         return config
 
-    def _signal_handler(self, signum: int, frame) -> None:
+    def _signal_handler(self, signum: int, frame: FrameType | None) -> None:
         """Handle shutdown signals."""
         self.logger.info(f"Received signal {signum}, shutting down...")
         self.running = False
 
-    def _fetch_metrics(self) -> Optional[Dict]:
+    def _fetch_metrics(self) -> dict | None:
         """Fetch metrics from WAS-110 API."""
         try:
             url = self.config.get('global', 'url')
@@ -136,14 +136,13 @@ class WAS110Monitor:
 
         if rx_power >= excellent:
             return 100
-        elif rx_power >= good:
+        if rx_power >= good:
             return 80
-        elif rx_power >= acceptable:
+        if rx_power >= acceptable:
             return 60
-        elif rx_power >= poor:
+        if rx_power >= poor:
             return 40
-        else:
-            return 20
+        return 20
 
     def _update_state_tracking(self, ploam_state: int) -> None:
         """Update PLOAM state tracking and counters."""
@@ -177,79 +176,89 @@ class WAS110Monitor:
 
     def _output_chart_definitions(self) -> None:
         """Output Netdata chart definitions."""
+        # Dimensions: (id, name, algorithm, multiplier, divisor)
         charts = [
             ("was110.ploam_state", "PLOAM State", "state", "pon", "line", 1000, [
-                ("state", "state", "absolute")
+                ("state", "state", "absolute", 1, 1),
             ]),
             ("was110.optical_power", "Optical Power", "dBm", "optical", "line", 1001, [
-                ("rx_power", "RX Power", "absolute"),
-                ("tx_power", "TX Power", "absolute")
+                ("rx_power", "RX Power", "absolute", 1, 100),
+                ("tx_power", "TX Power", "absolute", 1, 100),
             ]),
             ("was110.signal_quality", "Signal Quality", "percent", "optical", "area", 1002, [
-                ("quality_percent", "Quality", "absolute")
+                ("quality_percent", "Quality", "absolute", 1, 1),
             ]),
             ("was110.temperature", "Temperature", "celsius", "temperature", "line", 1003, [
-                ("optic", "Optic", "absolute"),
-                ("cpu1", "CPU1", "absolute"),
-                ("cpu2", "CPU2", "absolute")
+                ("optic", "Optic", "absolute", 1, 100),
+                ("cpu1", "CPU1", "absolute", 1, 100),
+                ("cpu2", "CPU2", "absolute", 1, 100),
             ]),
             ("was110.electrical", "Electrical", "mixed", "electrical", "line", 1004, [
-                ("voltage", "Voltage (V)", "absolute"),
-                ("tx_bias", "TX Bias (mA)", "absolute")
+                ("voltage", "Voltage (V)", "absolute", 1, 100),
+                ("tx_bias", "TX Bias (mA)", "absolute", 1, 100),
             ]),
             ("was110.connection_uptime", "Connection Uptime", "seconds", "pon", "area", 1005, [
-                ("uptime_seconds", "Uptime", "absolute")
+                ("uptime_seconds", "Uptime", "absolute", 1, 1),
             ]),
             ("was110.state_transitions", "State Transitions", "events", "pon", "stacked", 1006, [
-                ("total_transitions", "Total", "absolute"),
-                ("to_operational", "To O5", "absolute"),
-                ("to_down", "To Down", "absolute")
-            ])
+                ("total_transitions", "Total", "absolute", 1, 1),
+                ("to_operational", "To O5", "absolute", 1, 1),
+                ("to_down", "To Down", "absolute", 1, 1),
+            ]),
         ]
 
         for chart_id, title, units, family, chart_type, priority, dimensions in charts:
             print(f"CHART {chart_id} '' '{title}' '{units}' '{family}' '{chart_id}' {chart_type} {priority} {self.update_every}")
-            for dim_id, dim_name, algorithm in dimensions:
-                print(f"DIMENSION {dim_id} '{dim_name}' {algorithm} 1 1")
+            for dim_id, dim_name, algorithm, multiplier, divisor in dimensions:
+                print(f"DIMENSION {dim_id} '{dim_name}' {algorithm} {multiplier} {divisor}")
             print()
 
-    def _output_metrics(self, metrics: Dict) -> None:
+    def _output_metrics(self, metrics: dict) -> None:
         """Output current metrics in Netdata format."""
-        # Calculate derived metrics
-        signal_quality = self._calculate_signal_quality(metrics.get('rx_power_dBm', -999))
         self._update_state_tracking(metrics.get('ploam_state', 0))
         uptime = self._get_connection_uptime()
 
-        # Output all metrics
-        metric_outputs = [
-            ("was110.ploam_state", [("state", metrics.get('ploam_state', 0))]),
-            ("was110.optical_power", [
-                ("rx_power", int(metrics.get('rx_power_dBm', -999) * 100)),  # Store as hundredths
-                ("tx_power", int(metrics.get('tx_power_dBm', 0) * 100))
-            ]),
-            ("was110.signal_quality", [("quality_percent", signal_quality)]),
-            ("was110.temperature", [
-                ("optic", int(metrics.get('optic_tempC', 0) * 100)),  # Store as hundredths
-                ("cpu1", int(metrics.get('cpu1_tempC', 0) * 100)),
-                ("cpu2", int(metrics.get('cpu2_tempC', 0) * 100))
-            ]),
-            ("was110.electrical", [
-                ("voltage", int(metrics.get('module_voltage', 0) * 100)),  # Store as hundredths
-                ("tx_bias", int(metrics.get('tx_bias_mA', 0) * 100))
-            ]),
-            ("was110.connection_uptime", [("uptime_seconds", uptime)]),
-            ("was110.state_transitions", [
-                ("total_transitions", self.state_transitions),
-                ("to_operational", self.to_operational_count),
-                ("to_down", self.to_down_count)
-            ])
-        ]
+        # Always output state-tracking charts
+        self._output_chart("was110.ploam_state", [
+            ("state", metrics.get('ploam_state', 0)),
+        ])
+        self._output_chart("was110.connection_uptime", [
+            ("uptime_seconds", uptime),
+        ])
+        self._output_chart("was110.state_transitions", [
+            ("total_transitions", self.state_transitions),
+            ("to_operational", self.to_operational_count),
+            ("to_down", self.to_down_count),
+        ])
 
-        for chart_id, values in metric_outputs:
-            print(f"BEGIN {chart_id}")
-            for dim_id, value in values:
-                print(f"SET {dim_id} = {value}")
-            print("END")
+        # Only output device metrics when we have real data
+        rx_power = metrics.get('rx_power_dBm')
+        if rx_power is not None:
+            signal_quality = self._calculate_signal_quality(rx_power)
+            self._output_chart("was110.optical_power", [
+                ("rx_power", int(rx_power * 100)),
+                ("tx_power", int(metrics.get('tx_power_dBm', 0) * 100)),
+            ])
+            self._output_chart("was110.signal_quality", [
+                ("quality_percent", signal_quality),
+            ])
+            self._output_chart("was110.temperature", [
+                ("optic", int(metrics.get('optic_tempC', 0) * 100)),
+                ("cpu1", int(metrics.get('cpu1_tempC', 0) * 100)),
+                ("cpu2", int(metrics.get('cpu2_tempC', 0) * 100)),
+            ])
+            self._output_chart("was110.electrical", [
+                ("voltage", int(metrics.get('module_voltage', 0) * 100)),
+                ("tx_bias", int(metrics.get('tx_bias_mA', 0) * 100)),
+            ])
+
+    @staticmethod
+    def _output_chart(chart_id: str, values: list[tuple[str, int]]) -> None:
+        """Output a single chart's data in Netdata format."""
+        print(f"BEGIN {chart_id}")
+        for dim_id, value in values:
+            print(f"SET {dim_id} = {value}")
+        print("END")
 
     def run(self) -> None:
         """Main monitoring loop."""
@@ -267,19 +276,9 @@ class WAS110Monitor:
             if metrics:
                 self._output_metrics(metrics)
             else:
-                self.logger.warning("Failed to fetch metrics, outputting zeros")
-                # Output zeros to maintain chart continuity
-                empty_metrics = {
-                    'ploam_state': 0,
-                    'rx_power_dBm': -999,
-                    'tx_power_dBm': 0,
-                    'optic_tempC': 0,
-                    'cpu1_tempC': 0,
-                    'cpu2_tempC': 0,
-                    'module_voltage': 0,
-                    'tx_bias_mA': 0
-                }
-                self._output_metrics(empty_metrics)
+                self.logger.warning("Failed to fetch metrics, skipping device charts")
+                # Output only state-tracking charts with no device data
+                self._output_metrics({'ploam_state': 0})
 
             sys.stdout.flush()
 
@@ -294,22 +293,17 @@ class WAS110Monitor:
 
 def main():
     """Main entry point."""
-    # Handle command line argument for update interval
-    update_every = 2
+    config_path = '/etc/netdata/was110.conf'
+    monitor = WAS110Monitor(config_path)
+
+    # CLI argument overrides config file update_every (Netdata passes this)
     if len(sys.argv) > 1:
         try:
             update_every = int(sys.argv[1])
-            if update_every < 1:
-                update_every = 1
+            monitor.update_every = max(1, update_every)
         except ValueError:
             print("Usage: was110.plugin [update_every_seconds]", file=sys.stderr)
             sys.exit(1)
-
-    # Override config if specified via command line
-    config_path = '/etc/netdata/was110.conf'
-    monitor = WAS110Monitor(config_path)
-    if len(sys.argv) > 1:
-        monitor.update_every = update_every
 
     try:
         monitor.run()

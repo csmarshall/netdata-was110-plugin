@@ -134,7 +134,7 @@ Based on AT&T XGS-PON residential experience:
 
 | Quality | RX Power Range | Status |
 |---------|----------------|--------|
-| Excellent (100%) | -19 to -21 dBm | Optimal signal |
+| Excellent (100%) | ≥ -21 dBm | Optimal signal |
 | Good (80%) | -21 to -25 dBm | Normal operation |
 | Acceptable (60%) | -25 to -27 dBm | Monitor trends |
 | Poor (40%) | -27 to -30 dBm | Check fiber/connectors |

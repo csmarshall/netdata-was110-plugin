@@ -46,7 +46,7 @@ load_config() {
         # Parse config file for URL, username, password
         if command -v python3 >/dev/null 2>&1; then
             eval $(python3 -c "
-import configparser
+import configparser, sys
 try:
     config = configparser.ConfigParser()
     config.read('$CONFIG_FILE')
@@ -233,13 +233,23 @@ test_plugin() {
 
     # Test plugin output (first 20 lines)
     print_info "Testing plugin output (first 20 lines):"
-    timeout 10 "$PLUGIN_PATH" 2 2>/dev/null | head -20
+    PLUGIN_OUTPUT=$(timeout 10 "$PLUGIN_PATH" 2 2>/dev/null)
+    PLUGIN_RC=$?
 
-    if [ $? -eq 0 ]; then
-        print_success "Plugin executed successfully"
-        return 0
+    echo "$PLUGIN_OUTPUT" | head -20
+
+    # timeout returns 124 on timeout (expected — we kill the long-running plugin)
+    if [ $PLUGIN_RC -eq 0 ] || [ $PLUGIN_RC -eq 124 ]; then
+        # Verify we got valid Netdata output
+        if echo "$PLUGIN_OUTPUT" | grep -q "^CHART "; then
+            print_success "Plugin produced valid chart definitions"
+            return 0
+        else
+            print_error "Plugin ran but produced no chart definitions"
+            return 1
+        fi
     else
-        print_error "Plugin execution failed"
+        print_error "Plugin execution failed (exit code: $PLUGIN_RC)"
         return 1
     fi
 }
