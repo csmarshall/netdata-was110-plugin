@@ -60,3 +60,7 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
+
+[tool.ruff.format]
+# codebase style is single quotes; do not let the formatter churn the file
+quote-style = "single"

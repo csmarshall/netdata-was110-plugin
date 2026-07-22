@@ -24,7 +24,7 @@ jobs:
         run: ruff check was110.plugin
 
       - name: Ruff format check
-        run: ruff format --check was110.plugin
+        run: ruff format --check --diff was110.plugin
 
       - name: Mypy
         run: mypy was110.plugin
