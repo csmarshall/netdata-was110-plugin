@@ -276,50 +276,71 @@ class WAS110Monitor:
         uptime = self._get_connection_uptime()
 
         # Always output state-tracking charts
-        self._output_chart("was110.ploam_state", [
-            ("state", metrics.get('ploam_state', 0)),
-        ])
-        self._output_chart("was110.connection_uptime", [
-            ("uptime_seconds", uptime),
-        ])
-        self._output_chart("was110.state_transitions", [
-            ("total_transitions", self.state_transitions),
-            ("to_operational", self.to_operational_count),
-            ("to_down", self.to_down_count),
-        ])
+        self._output_chart(
+            'was110.ploam_state',
+            [
+                ('state', metrics.get('ploam_state', 0)),
+            ],
+        )
+        self._output_chart(
+            'was110.connection_uptime',
+            [
+                ('uptime_seconds', uptime),
+            ],
+        )
+        self._output_chart(
+            'was110.state_transitions',
+            [
+                ('total_transitions', self.state_transitions),
+                ('to_operational', self.to_operational_count),
+                ('to_down', self.to_down_count),
+            ],
+        )
 
         # Only output device metrics when we have real data
         rx_power = metrics.get('rx_power_dBm')
         if rx_power is not None:
             signal_quality = self._calculate_signal_quality(rx_power)
-            self._output_chart("was110.optical_power", [
-                ("rx_power", int(rx_power * 100)),
-                ("tx_power", int(metrics.get('tx_power_dBm', 0) * 100)),
-            ])
-            self._output_chart("was110.signal_quality", [
-                ("quality_percent", signal_quality),
-            ])
-            self._output_chart("was110.temperature", [
-                ("optic", int(metrics.get('optic_tempC', 0) * 100)),
-                ("cpu1", int(metrics.get('cpu1_tempC', 0) * 100)),
-                ("cpu2", int(metrics.get('cpu2_tempC', 0) * 100)),
-            ])
-            self._output_chart("was110.electrical", [
-                ("voltage", int(metrics.get('module_voltage', 0) * 100)),
-                ("tx_bias", int(metrics.get('tx_bias_mA', 0) * 100)),
-            ])
+            self._output_chart(
+                'was110.optical_power',
+                [
+                    ('rx_power', int(rx_power * 100)),
+                    ('tx_power', int(metrics.get('tx_power_dBm', 0) * 100)),
+                ],
+            )
+            self._output_chart(
+                'was110.signal_quality',
+                [
+                    ('quality_percent', signal_quality),
+                ],
+            )
+            self._output_chart(
+                'was110.temperature',
+                [
+                    ('optic', int(metrics.get('optic_tempC', 0) * 100)),
+                    ('cpu1', int(metrics.get('cpu1_tempC', 0) * 100)),
+                    ('cpu2', int(metrics.get('cpu2_tempC', 0) * 100)),
+                ],
+            )
+            self._output_chart(
+                'was110.electrical',
+                [
+                    ('voltage', int(metrics.get('module_voltage', 0) * 100)),
+                    ('tx_bias', int(metrics.get('tx_bias_mA', 0) * 100)),
+                ],
+            )
 
     @staticmethod
     def _output_chart(chart_id: str, values: list[tuple[str, int]]) -> None:
         """Output a single chart's data in Netdata format."""
-        print(f"BEGIN {chart_id}")
+        print(f'BEGIN {chart_id}')
         for dim_id, value in values:
-            print(f"SET {dim_id} = {value}")
-        print("END")
+            print(f'SET {dim_id} = {value}')
+        print('END')
 
     def run(self) -> None:
         """Main monitoring loop."""
-        self.logger.info("Starting WAS-110 monitoring plugin")
+        self.logger.info('Starting WAS-110 monitoring plugin')
 
         # Output chart definitions once
         self._output_chart_definitions()
@@ -333,7 +354,7 @@ class WAS110Monitor:
             if metrics:
                 self._output_metrics(metrics)
             else:
-                self.logger.warning("Failed to fetch metrics, skipping device charts")
+                self.logger.warning('Failed to fetch metrics, skipping device charts')
                 # Output only state-tracking charts with no device data
                 self._output_metrics({'ploam_state': 0})
 
@@ -345,7 +366,7 @@ class WAS110Monitor:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        self.logger.info("WAS-110 monitoring plugin stopped")
+        self.logger.info('WAS-110 monitoring plugin stopped')
 
 
 def main() -> None:
@@ -361,7 +382,7 @@ def main() -> None:
             update_every = int(sys.argv[1])
             monitor.update_every = max(1, update_every)
         except ValueError:
-            print("Usage: was110.plugin [update_every_seconds]", file=sys.stderr)
+            print('Usage: was110.plugin [update_every_seconds]', file=sys.stderr)
             sys.exit(1)
 
     try:
@@ -369,9 +390,9 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        logging.error(f"Fatal error: {e}")
+        logging.error(f'Fatal error: {e}')
         sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
