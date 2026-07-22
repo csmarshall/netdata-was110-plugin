@@ -109,7 +109,7 @@ class WAS110Monitor:
             response = requests.get(url, auth=(username, password), verify=False, timeout=timeout)
             response.raise_for_status()
 
-            data = response.json()
+            data: dict = response.json()
             self.logger.debug(f'Fetched metrics: {data}')
             return data
 
