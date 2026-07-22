@@ -61,7 +61,7 @@ class WAS110Monitor:
         logging.basicConfig(
             level=getattr(logging, log_level.upper()),
             format='%(asctime)s [%(levelname)s] was110.plugin: %(message)s',
-            stream=sys.stderr
+            stream=sys.stderr,
         )
         self.logger = logging.getLogger(__name__)
 
@@ -89,13 +89,13 @@ class WAS110Monitor:
             try:
                 config.read(self.config_path)
             except Exception as e:
-                logging.error(f"Failed to read config file {self.config_path}: {e}")
+                logging.error(f'Failed to read config file {self.config_path}: {e}')
 
         return config
 
     def _signal_handler(self, signum: int, frame: FrameType | None) -> None:
         """Handle shutdown signals."""
-        self.logger.info(f"Received signal {signum}, shutting down...")
+        self.logger.info(f'Received signal {signum}, shutting down...')
         self.running = False
 
     def _fetch_metrics(self) -> dict | None:
@@ -106,28 +106,23 @@ class WAS110Monitor:
             password = self.config.get('global', 'password')
             timeout = self.config.getint('global', 'timeout', fallback=5)
 
-            response = requests.get(
-                url,
-                auth=(username, password),
-                verify=False,
-                timeout=timeout
-            )
+            response = requests.get(url, auth=(username, password), verify=False, timeout=timeout)
             response.raise_for_status()
 
             data = response.json()
-            self.logger.debug(f"Fetched metrics: {data}")
+            self.logger.debug(f'Fetched metrics: {data}')
             return data
 
         except requests.exceptions.Timeout:
-            self.logger.error("Timeout connecting to WAS-110")
+            self.logger.error('Timeout connecting to WAS-110')
         except requests.exceptions.ConnectionError:
-            self.logger.error("Connection error to WAS-110")
+            self.logger.error('Connection error to WAS-110')
         except requests.exceptions.HTTPError as e:
-            self.logger.error(f"HTTP error from WAS-110: {e}")
+            self.logger.error(f'HTTP error from WAS-110: {e}')
         except json.JSONDecodeError:
-            self.logger.error("Invalid JSON response from WAS-110")
+            self.logger.error('Invalid JSON response from WAS-110')
         except Exception as e:
-            self.logger.error(f"Unexpected error fetching metrics: {e}")
+            self.logger.error(f'Unexpected error fetching metrics: {e}')
 
         return None
 
@@ -154,17 +149,17 @@ class WAS110Monitor:
 
         if self.last_ploam_state is not None and self.last_ploam_state != ploam_state:
             self.state_transitions += 1
-            self.logger.info(f"PLOAM state transition: {self.last_ploam_state} -> {ploam_state}")
+            self.logger.info(f'PLOAM state transition: {self.last_ploam_state} -> {ploam_state}')
 
             # Track transitions to operational states
             if ploam_state in [51, 52]:
                 self.to_operational_count += 1
                 self.uptime_start = current_time
-                self.logger.info("Connection established (O5 state)")
+                self.logger.info('Connection established (O5 state)')
             elif self.last_ploam_state in [51, 52]:
                 self.to_down_count += 1
                 self.uptime_start = None
-                self.logger.warning("Connection lost (left O5 state)")
+                self.logger.warning('Connection lost (left O5 state)')
 
         elif self.last_ploam_state is None and ploam_state in [51, 52]:
             # Initial state in operational mode
@@ -182,37 +177,95 @@ class WAS110Monitor:
         """Output Netdata chart definitions."""
         # Dimensions: (id, name, algorithm, multiplier, divisor)
         charts = [
-            ("was110.ploam_state", "PLOAM State", "state", "pon", "line", 1000, [
-                ("state", "state", "absolute", 1, 1),
-            ]),
-            ("was110.optical_power", "Optical Power", "dBm", "optical", "line", 1001, [
-                ("rx_power", "RX Power", "absolute", 1, 100),
-                ("tx_power", "TX Power", "absolute", 1, 100),
-            ]),
-            ("was110.signal_quality", "Signal Quality", "percent", "optical", "area", 1002, [
-                ("quality_percent", "Quality", "absolute", 1, 1),
-            ]),
-            ("was110.temperature", "Temperature", "celsius", "temperature", "line", 1003, [
-                ("optic", "Optic", "absolute", 1, 100),
-                ("cpu1", "CPU1", "absolute", 1, 100),
-                ("cpu2", "CPU2", "absolute", 1, 100),
-            ]),
-            ("was110.electrical", "Electrical", "mixed", "electrical", "line", 1004, [
-                ("voltage", "Voltage (V)", "absolute", 1, 100),
-                ("tx_bias", "TX Bias (mA)", "absolute", 1, 100),
-            ]),
-            ("was110.connection_uptime", "Connection Uptime", "seconds", "pon", "area", 1005, [
-                ("uptime_seconds", "Uptime", "absolute", 1, 1),
-            ]),
-            ("was110.state_transitions", "State Transitions", "events", "pon", "stacked", 1006, [
-                ("total_transitions", "Total", "absolute", 1, 1),
-                ("to_operational", "To O5", "absolute", 1, 1),
-                ("to_down", "To Down", "absolute", 1, 1),
-            ]),
+            (
+                'was110.ploam_state',
+                'PLOAM State',
+                'state',
+                'pon',
+                'line',
+                1000,
+                [
+                    ('state', 'state', 'absolute', 1, 1),
+                ],
+            ),
+            (
+                'was110.optical_power',
+                'Optical Power',
+                'dBm',
+                'optical',
+                'line',
+                1001,
+                [
+                    ('rx_power', 'RX Power', 'absolute', 1, 100),
+                    ('tx_power', 'TX Power', 'absolute', 1, 100),
+                ],
+            ),
+            (
+                'was110.signal_quality',
+                'Signal Quality',
+                'percent',
+                'optical',
+                'area',
+                1002,
+                [
+                    ('quality_percent', 'Quality', 'absolute', 1, 1),
+                ],
+            ),
+            (
+                'was110.temperature',
+                'Temperature',
+                'celsius',
+                'temperature',
+                'line',
+                1003,
+                [
+                    ('optic', 'Optic', 'absolute', 1, 100),
+                    ('cpu1', 'CPU1', 'absolute', 1, 100),
+                    ('cpu2', 'CPU2', 'absolute', 1, 100),
+                ],
+            ),
+            (
+                'was110.electrical',
+                'Electrical',
+                'mixed',
+                'electrical',
+                'line',
+                1004,
+                [
+                    ('voltage', 'Voltage (V)', 'absolute', 1, 100),
+                    ('tx_bias', 'TX Bias (mA)', 'absolute', 1, 100),
+                ],
+            ),
+            (
+                'was110.connection_uptime',
+                'Connection Uptime',
+                'seconds',
+                'pon',
+                'area',
+                1005,
+                [
+                    ('uptime_seconds', 'Uptime', 'absolute', 1, 1),
+                ],
+            ),
+            (
+                'was110.state_transitions',
+                'State Transitions',
+                'events',
+                'pon',
+                'stacked',
+                1006,
+                [
+                    ('total_transitions', 'Total', 'absolute', 1, 1),
+                    ('to_operational', 'To O5', 'absolute', 1, 1),
+                    ('to_down', 'To Down', 'absolute', 1, 1),
+                ],
+            ),
         ]
 
         for chart_id, title, units, family, chart_type, priority, dimensions in charts:
-            print(f"CHART {chart_id} '' '{title}' '{units}' '{family}' '{chart_id}' {chart_type} {priority} {self.update_every}")
+            print(
+                f"CHART {chart_id} '' '{title}' '{units}' '{family}' '{chart_id}' {chart_type} {priority} {self.update_every}"
+            )
             for dim_id, dim_name, algorithm, multiplier, divisor in dimensions:
                 print(f"DIMENSION {dim_id} '{dim_name}' {algorithm} {multiplier} {divisor}")
             print()
