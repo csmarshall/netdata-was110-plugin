@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # WAS-110 API Test Script
 # Tests connectivity and API response from WAS-110 device
@@ -8,14 +8,14 @@
 WAS110_URL="https://192.168.11.1/cgi-bin/luci/8311/metrics"
 WAS110_USER="root"
 WAS110_PASS="8311"
-CONFIG_FILE="/etc/netdata/was110.conf"
+CONFIG_FILE="${NETDATA_USER_CONFIG_DIR:-/etc/netdata}/was110.conf"
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+NC=$'\033[0m' # No Color
 
 print_header() {
     echo "${BLUE}=== WAS-110 API Test Script ===${NC}"
@@ -45,7 +45,7 @@ load_config() {
 
         # Parse config file for URL, username, password
         if command -v python3 >/dev/null 2>&1; then
-            eval $(python3 -c "
+            eval "$(python3 -c "
 import configparser, sys
 try:
     config = configparser.ConfigParser()
@@ -59,7 +59,7 @@ try:
             print(f'WAS110_PASS=\"{config[\"global\"][\"password\"]}\"')
 except Exception as e:
     print(f'# Error reading config: {e}', file=sys.stderr)
-" 2>/dev/null)
+" 2>/dev/null)"
         fi
     else
         print_warning "Configuration file $CONFIG_FILE not found, using defaults"

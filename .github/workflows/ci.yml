@@ -49,7 +49,7 @@ jobs:
         run: python -m py_compile was110.plugin
 
       - name: Verify plugin imports
-        run: python -c "exec(open('was110.plugin').read())"
+        run: python -c "import importlib.util; spec = importlib.util.spec_from_file_location('was110', 'was110.plugin'); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)"
 
       - name: Test chart output format
         run: |

@@ -13,15 +13,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import sys
 import time
 from configparser import ConfigParser
 from pathlib import Path
-from types import FrameType
+from typing import TYPE_CHECKING
 
 import requests
 import urllib3
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 
 # Disable SSL warnings for self-signed certificates
@@ -291,10 +295,12 @@ class WAS110Monitor:
         self.logger.info("WAS-110 monitoring plugin stopped")
 
 
-def main():
+def main() -> None:
     """Main entry point."""
-    config_path = '/etc/netdata/was110.conf'
-    monitor = WAS110Monitor(config_path)
+    # Netdata exports NETDATA_USER_CONFIG_DIR for external plugins; honoring it
+    # makes the plugin work in prefix installs (e.g. --install-prefix /usr/www)
+    config_dir = os.environ.get('NETDATA_USER_CONFIG_DIR', '/etc/netdata')
+    monitor = WAS110Monitor(str(Path(config_dir) / 'was110.conf'))
 
     # CLI argument overrides config file update_every (Netdata passes this)
     if len(sys.argv) > 1:
