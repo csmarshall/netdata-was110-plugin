@@ -49,7 +49,18 @@ jobs:
         run: python -m py_compile was110.plugin
 
       - name: Verify plugin imports
-        run: python -c "import importlib.util; spec = importlib.util.spec_from_file_location('was110', 'was110.plugin'); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)"
+        # spec_from_file_location returns None for the unrecognized .plugin
+        # extension, so name the source loader explicitly
+        run: |
+          python - <<'EOF'
+          import importlib.machinery
+          import importlib.util
+          loader = importlib.machinery.SourceFileLoader("was110", "was110.plugin")
+          spec = importlib.util.spec_from_loader("was110", loader)
+          mod = importlib.util.module_from_spec(spec)
+          loader.exec_module(mod)
+          print("import OK")
+          EOF
 
       - name: Test chart output format
         run: |

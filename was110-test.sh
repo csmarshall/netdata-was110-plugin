@@ -99,7 +99,7 @@ test_api() {
                        "$WAS110_URL" 2>/dev/null)
 
         HTTP_CODE=$(echo "$RESPONSE" | grep -o "HTTPCODE:[0-9]*" | cut -d: -f2)
-        JSON_DATA=$(echo "$RESPONSE" | sed 's/HTTPCODE:[0-9]*$//')
+        JSON_DATA="${RESPONSE%HTTPCODE:*}"
 
         if [ "$HTTP_CODE" = "200" ]; then
             print_success "HTTP request successful (200 OK)"
